@@ -1,0 +1,1 @@
+"""Pruebas del catálogo de tipos de riesgo."""

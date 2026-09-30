@@ -1,0 +1,1 @@
+"""Aplicación de tipos de riesgo."""

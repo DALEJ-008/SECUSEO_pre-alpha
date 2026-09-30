@@ -1,0 +1,1 @@
+"""Vistas del catálogo de tipos de riesgo."""

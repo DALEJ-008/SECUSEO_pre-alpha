@@ -1,0 +1,1 @@
+"""Migraciones de tipos de riesgo."""

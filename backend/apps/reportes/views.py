@@ -1,0 +1,1 @@
+"""Vistas del dominio de reportes."""

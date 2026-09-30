@@ -1,0 +1,30 @@
+# Variables de entorno y secretos
+.env
+.env.*
+!.env.example
+
+# Dependencias y artefactos de Vite
+node_modules/
+dist/
+.vite/
+coverage/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Python y Django
+__pycache__/
+*.py[cod]
+*.sqlite3
+venv/
+.venv/
+env/
+staticfiles/
+media/
+
+# Runtime GIS local de Conda
+backend/gis-runtime/
+
+# Archivos del sistema operativo
+.DS_Store
+Thumbs.db

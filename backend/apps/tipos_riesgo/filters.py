@@ -1,0 +1,1 @@
+"""Filtros del catálogo de tipos de riesgo."""

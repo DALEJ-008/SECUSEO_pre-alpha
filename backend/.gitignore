@@ -1,0 +1,6 @@
+.env
+venv/
+gis-runtime/
+__pycache__/
+*.py[cod]
+staticfiles/

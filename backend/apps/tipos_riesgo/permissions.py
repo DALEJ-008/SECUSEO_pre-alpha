@@ -1,0 +1,1 @@
+"""Permisos del catálogo de tipos de riesgo."""

@@ -1,0 +1,1 @@
+"""Serializadores del catálogo de tipos de riesgo."""
