@@ -107,6 +107,10 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
+
+AUTH_USER_MODEL = "usuarios.Usuario"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 CORS_ALLOWED_ORIGINS = [
@@ -143,3 +147,19 @@ SPECTACULAR_SETTINGS = {
     "VERSION": "1.0.0",
     "SERVE_INCLUDE_SCHEMA": False,
 }
+
+# --- Sesión / CSRF (el frontend React usa cookies de sesión + X-CSRFToken) ---
+# En producción con frontend y backend en dominios distintos y HTTPS:
+#   SESSION_COOKIE_SAMESITE=None, SESSION_COOKIE_SECURE=true, CSRF_COOKIE_SECURE=true
+SESSION_COOKIE_SAMESITE = os.getenv("SESSION_COOKIE_SAMESITE", "Lax")
+SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "false").lower() == "true"
+CSRF_COOKIE_SECURE = os.getenv("CSRF_COOKIE_SECURE", "false").lower() == "true"
+CSRF_COOKIE_SAMESITE = SESSION_COOKIE_SAMESITE
+
+# --- Aplicación ---
+# A dónde redirige /logout/ (ruta del frontend).
+FRONTEND_LOGIN_URL = os.getenv("FRONTEND_LOGIN_URL", "/login")
+# Verificación del teléfono por código. Requiere integrar un proveedor de SMS
+# (ver apps/usuarios/servicios.py); en DEBUG el código se devuelve en la respuesta.
+VERIFICACION_TELEFONO_ACTIVA = os.getenv("VERIFICACION_TELEFONO_ACTIVA", "false").lower() == "true"
+TAMANO_MAX_IMAGEN_MB = 5
