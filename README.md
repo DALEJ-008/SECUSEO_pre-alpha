@@ -30,7 +30,7 @@ npm install
 npm run dev
 ```
 
-Backend Django se corre de la siguiente manera (requiere Python 3.10+ y un virtualenv con dependencias instaladas):
+Backend Django se corre de la siguiente manera (requiere Python 3.12+ y un virtualenv con dependencias instaladas):
 ```bash
 cd Backend
 python manage.py runserver
