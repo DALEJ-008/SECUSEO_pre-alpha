@@ -23,6 +23,7 @@ export default function ReportForm() {
   const zonasPolygonsRef = useRef([]);
   const zonasBBoxRef = useRef(null);
   const acTimerRef = useRef(null);
+  const pendingPointRef = useRef(null);
 
   useEffect(() => {
     fetch('/Recursos/Barrios_Funza.geojson')
@@ -73,37 +74,62 @@ export default function ReportForm() {
     return polys.some((poly) => poly?.length && ringContains(lon, lat, poly[0]));
   }
 
-  function initMiniMap() {
-    if (miniMapRef.current) return miniMapRef.current;
-    setShowMiniMap(true);
-    // el div existe recién en el próximo render; se crea en un efecto aparte
-    return null;
+  // Coloca (o mueve) el marcador en el minimapa y, opcionalmente, centra la vista
+  function placeMarker(la, lo, zoom) {
+    const map = miniMapRef.current;
+    if (!map) return;
+    const pos = [parseFloat(la), parseFloat(lo)];
+    if (pickMarkerRef.current) pickMarkerRef.current.setLatLng(pos);
+    else pickMarkerRef.current = L.marker(pos).addTo(map);
+    if (zoom) map.setView(pos, zoom);
   }
 
+  // Crea el minimapa cuando el contenedor ya existe en el DOM
   useEffect(() => {
-    if (showMiniMap && !miniMapRef.current && miniMapDivRef.current) {
-      const map = L.map(miniMapDivRef.current).setView([4.716, -74.212], 13);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
-      map.on('click', (e) => {
-        const { lat: la, lng: lo } = e.latlng;
-        if (pickMarkerRef.current) pickMarkerRef.current.setLatLng(e.latlng);
-        else pickMarkerRef.current = L.marker(e.latlng).addTo(map);
-        setLat(la);
-        setLng(lo);
-        fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${la}&lon=${lo}`)
-          .then((r) => r.json()).then((data) => { if (data?.display_name) setLocation(data.display_name); })
-          .catch(() => {});
-      });
-      miniMapRef.current = map;
-      setTimeout(() => map.invalidateSize(), 50);
+    if (!showMiniMap) {
+      if (miniMapRef.current) { miniMapRef.current.remove(); miniMapRef.current = null; pickMarkerRef.current = null; }
+      return undefined;
     }
-  }, [showMiniMap]);
+    if (miniMapRef.current || !miniMapDivRef.current) return undefined;
+
+    const map = L.map(miniMapDivRef.current).setView([4.716, -74.212], 14);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap',
+      maxZoom: 19,
+    }).addTo(map);
+    map.on('click', (e) => {
+      const { lat: la, lng: lo } = e.latlng;
+      placeMarker(la, lo);
+      setLat(la);
+      setLng(lo);
+      fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${la}&lon=${lo}`)
+        .then((r) => r.json()).then((data) => { if (data?.display_name) setLocation(data.display_name); })
+        .catch(() => {});
+    });
+    miniMapRef.current = map;
+
+    // Si ya había una ubicación elegida (p. ej. desde las sugerencias), se muestra
+    if (pendingPointRef.current) {
+      const [pla, plo] = pendingPointRef.current;
+      placeMarker(pla, plo, 16);
+      pendingPointRef.current = null;
+    }
+    // El contenedor acaba de aparecer: Leaflet necesita recalcular su tamaño
+    const t1 = setTimeout(() => map.invalidateSize(), 50);
+    const t2 = setTimeout(() => map.invalidateSize(), 300);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [showMiniMap]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Al desmontar la página se destruye el mapa
+  useEffect(() => () => {
+    if (miniMapRef.current) { miniMapRef.current.remove(); miniMapRef.current = null; }
+  }, []);
 
   function handleOpenMap() {
     setShowMiniMap(true);
     setTimeout(() => {
       miniMapDivRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }, 0);
+    }, 100);
   }
 
   function handleLocationInput(value) {
@@ -137,15 +163,13 @@ export default function ReportForm() {
     setLocation(item.display_name);
     setLat(item.lat);
     setLng(item.lon);
-    setShowMiniMap(true);
     setSuggestions([]);
-    setTimeout(() => {
-      const map = miniMapRef.current;
-      if (!map) return;
-      if (pickMarkerRef.current) pickMarkerRef.current.setLatLng([item.lat, item.lon]);
-      else pickMarkerRef.current = L.marker([item.lat, item.lon]).addTo(map);
-      map.setView([item.lat, item.lon], 16);
-    }, 0);
+    if (miniMapRef.current) {
+      placeMarker(item.lat, item.lon, 16);
+    } else {
+      pendingPointRef.current = [item.lat, item.lon];
+      setShowMiniMap(true);
+    }
   }
 
   async function handleSubmit(e) {
@@ -204,9 +228,20 @@ export default function ReportForm() {
 
           <div>
             <div className="flex items-center gap-2 mb-2">
-              <button type="button" className="rounded-md bg-white border px-3 py-1" onClick={handleOpenMap}>Seleccionar en el mapa</button>
+              <button type="button" className="inline-flex items-center gap-1 rounded-md bg-white border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50" onClick={handleOpenMap}>
+                <span className="material-symbols-outlined" style={{ fontSize: 18 }}>pin_drop</span>
+                Marcar en el mapa
+              </button>
+              {showMiniMap && <span className="text-xs text-slate-500">Haz clic en el mapa para marcar el punto exacto</span>}
             </div>
-            {showMiniMap && <div ref={miniMapDivRef} style={{ height: 200, border: '1px solid #e5e7eb', borderRadius: 8 }} />}
+            {showMiniMap && (
+              <div className="relative z-0 w-full overflow-hidden rounded-lg border border-slate-300" style={{ height: 280 }}>
+                <div ref={miniMapDivRef} style={{ height: '100%', width: '100%' }} />
+              </div>
+            )}
+            {showMiniMap && lat && lng && (
+              <p className="mt-2 text-xs text-slate-500">Punto seleccionado: {Number(lat).toFixed(5)}, {Number(lng).toFixed(5)}</p>
+            )}
             {suggestions.length > 0 && (
               <div className="mt-2">
                 {suggestions.map((item, i) => (

@@ -1,4 +1,10 @@
 """Pruebas del panel de administración y notificaciones."""
+import io
+
+from django.core.files.uploadedfile import SimpleUploadedFile
+from PIL import Image
+
+from apps.administracion.models import ComunicadoImagen
 from apps.reportes.models import Reporte
 from apps.tests_base import BaseAPITest
 from apps.usuarios.models import Usuario
@@ -94,6 +100,22 @@ class AdminAPITests(BaseAPITest):
         luis = self.cliente(self.luis)
         self.assertEqual(luis.get(f"/api/notificaciones/{nid}/detail/").status_code, 404)
         self.assertIn(self.cliente().get("/api/notificaciones/").status_code, (401, 403))
+
+    def test_comunicado_con_imagen(self):
+        buffer = io.BytesIO()
+        Image.new("RGB", (4, 4), "red").save(buffer, format="PNG")
+        archivo = SimpleUploadedFile("imagen.png", buffer.getvalue(), content_type="image/png")
+
+        response = self.post(
+            self.cliente(self.admin),
+            "/api/comunicado/create/",
+            {"title": "Aviso con imagen", "body": "Contenido", "images": archivo},
+        )
+
+        self.assertEqual(response.status_code, 201, response.content)
+        imagen = ComunicadoImagen.objects.get(comunicado_id=response.json()["id"])
+        self.assertTrue(imagen.imagen.name.startswith("comunicados/"))
+        imagen.imagen.delete(save=False)
 
     def test_admin_de_django_sigue_accesible(self):
         self.assertEqual(self.client.get("/admin/login/").status_code, 200)

@@ -2,25 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import L from 'leaflet';
 import Header from '../componentes/Header';
-import { apiFetch, apiJson } from '../lib/services/api';
+import { apiFetch, apiJson, mediaUrl } from '../lib/services/api';
+import { prettyType, nivelDeRiesgo } from '../lib/services/tipos';
 
-const TYPE_LABELS = {
-  robo: 'Robo', asalto: 'Asalto', hurto: 'Hurto', vandalismo: 'Vandalismo',
-  iluminacion: 'Poca Iluminación', accidente: 'Accidente de Tránsito', violencia: 'Violencia',
-  consumo_drogas: 'Consumo/Venta de Drogas', incendio: 'Incendio', amenaza: 'Amenaza',
-  robo_vehiculo: 'Robo de Vehículos', acoso_callejero: 'Acoso Callejero',
-  prostitucion_ilegal: 'Prostitución Ilegal', fraude_estafa: 'Fraudes y Estafas', otro: 'Otro',
-};
-
-function mapPriorityToLevel(p) {
-  if (!p) return 'Bajo';
-  const s = String(p).toLowerCase();
-  if (s.includes('alto') || s.includes('3')) return 'Alto';
-  if (s.includes('medio') || s.includes('2')) return 'Medio';
-  if (s.includes('asalto') || s.includes('violencia') || s.includes('robo')) return 'Alto';
-  if (s.includes('ilumin') || s.includes('hurto') || s.includes('vandal')) return 'Medio';
-  return 'Bajo';
-}
+const MAX_IMAGENES_COMUNICADO = 6;
+const MAX_MB_IMAGEN = 5;
 
 const ESTADO_BADGE = {
   validado: 'bg-green-100 text-green-800',
@@ -38,8 +24,13 @@ export default function AdminPanel() {
   const [searchQ, setSearchQ] = useState('');
   const [searchEstado, setSearchEstado] = useState('');
   const [searching, setSearching] = useState(false);
-  const [comunicado, setComunicado] = useState('');
+  const [comTitulo, setComTitulo] = useState('');
+  const [comCuerpo, setComCuerpo] = useState('');
+  const [comImagenes, setComImagenes] = useState([]); // [{ file, preview }]
+  const [enviandoCom, setEnviandoCom] = useState(false);
   const [modalReport, setModalReport] = useState(null);
+  const [imagenAmpliada, setImagenAmpliada] = useState(null);
+  const comFileRef = useRef(null);
 
   const modalMapDivRef = useRef(null);
   const modalMapRef = useRef(null);
@@ -110,23 +101,24 @@ export default function AdminPanel() {
   }
 
   useEffect(() => {
-    if (!modalReport) {
-      if (modalMapRef.current) { try { modalMapRef.current.remove(); } catch (e) {} modalMapRef.current = null; }
-      return;
-    }
-    requestAnimationFrame(() => {
+    if (modalMapRef.current) { try { modalMapRef.current.remove(); } catch (e) {} modalMapRef.current = null; }
+    if (!modalReport) return undefined;
+    const lat = parseFloat(modalReport.coordenadas?.[1]);
+    const lon = parseFloat(modalReport.coordenadas?.[0]);
+    if (isNaN(lat) || isNaN(lon)) return undefined;
+    const raf = requestAnimationFrame(() => {
       if (!modalMapDivRef.current) return;
-      const map = L.map(modalMapDivRef.current, { preferCanvas: true }).setView([4.716, -74.212], 13);
+      const map = L.map(modalMapDivRef.current, { preferCanvas: true }).setView([lat, lon], 16);
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
-      if (modalReport.coordenadas?.length >= 2) {
-        const lat = parseFloat(modalReport.coordenadas[1]);
-        const lon = parseFloat(modalReport.coordenadas[0]);
-        if (!isNaN(lat) && !isNaN(lon)) { map.setView([lat, lon], 15); L.marker([lat, lon]).addTo(map); }
-      }
+      L.marker([lat, lon]).addTo(map);
       modalMapRef.current = map;
-      setTimeout(() => { try { map.invalidateSize(); } catch (e) {} }, 80);
+      setTimeout(() => { try { map.invalidateSize(); } catch (e) {} }, 100);
     });
+    return () => cancelAnimationFrame(raf);
   }, [modalReport]);
+
+  // Libera las URLs temporales de las vistas previas de imágenes del comunicado
+  useEffect(() => () => { comImagenes.forEach((i) => URL.revokeObjectURL(i.preview)); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function approveFromModal() {
     if (!confirm(`Aprobar reporte #${modalReport.id}?`)) return;
@@ -152,11 +144,56 @@ export default function AdminPanel() {
     if (res.ok) fetchUsers(); else alert('Error al eliminar');
   }
 
+  function addComImagenes(fileList) {
+    const nuevas = [];
+    for (const file of Array.from(fileList || [])) {
+      if (!file.type.startsWith('image/')) { alert(`"${file.name}" no es una imagen`); continue; }
+      if (file.size > MAX_MB_IMAGEN * 1024 * 1024) { alert(`"${file.name}" supera ${MAX_MB_IMAGEN} MB`); continue; }
+      nuevas.push({ file, preview: URL.createObjectURL(file) });
+    }
+    setComImagenes((prev) => {
+      const todas = [...prev, ...nuevas];
+      if (todas.length > MAX_IMAGENES_COMUNICADO) {
+        alert(`Máximo ${MAX_IMAGENES_COMUNICADO} imágenes por comunicado`);
+        todas.slice(MAX_IMAGENES_COMUNICADO).forEach((i) => URL.revokeObjectURL(i.preview));
+        return todas.slice(0, MAX_IMAGENES_COMUNICADO);
+      }
+      return todas;
+    });
+    if (comFileRef.current) comFileRef.current.value = '';
+  }
+  function removeComImagen(idx) {
+    setComImagenes((prev) => {
+      URL.revokeObjectURL(prev[idx]?.preview);
+      return prev.filter((_, i) => i !== idx);
+    });
+  }
+
   async function sendComunicado() {
-    if (!comunicado.trim()) { alert('Escribe un comunicado antes de enviar'); return; }
-    const fd = new FormData(); fd.append('title', comunicado.slice(0, 80)); fd.append('body', comunicado);
-    const res = await apiFetch('/api/comunicado/create/', { method: 'POST', body: fd });
-    if (res.ok) { alert('Comunicado enviado'); setComunicado(''); fetchCounts(); } else alert('Error al enviar comunicado');
+    const titulo = comTitulo.trim();
+    const cuerpo = comCuerpo.trim();
+    if (!titulo) { alert('Escribe el título del comunicado'); return; }
+    if (!cuerpo) { alert('Escribe el contenido del comunicado'); return; }
+    const fd = new FormData();
+    fd.append('title', titulo);
+    fd.append('body', cuerpo);
+    comImagenes.forEach((i) => fd.append('images', i.file));
+    setEnviandoCom(true);
+    try {
+      const { res, data } = await apiJson('/api/comunicado/create/', { method: 'POST', body: fd });
+      if (res.ok) {
+        alert('Comunicado enviado');
+        comImagenes.forEach((i) => URL.revokeObjectURL(i.preview));
+        setComTitulo(''); setComCuerpo(''); setComImagenes([]);
+        fetchCounts();
+      } else {
+        alert(data?.mensaje || 'Error al enviar comunicado');
+      }
+    } catch (e) {
+      alert('Error de red al enviar el comunicado');
+    } finally {
+      setEnviandoCom(false);
+    }
   }
 
   function reportRow(r, { validatedView = false } = {}) {
@@ -193,8 +230,12 @@ export default function AdminPanel() {
     );
   }
 
-  const level = modalReport ? mapPriorityToLevel(modalReport.prioridad || modalReport.tipo || '') : 'Bajo';
+  const level = modalReport ? nivelDeRiesgo(modalReport) : 'Bajo';
   const levelBadge = level === 'Alto' ? 'bg-red-100 text-red-800' : level === 'Medio' ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800';
+  const modalImagenes = modalReport
+    ? (modalReport.imagenes?.length ? modalReport.imagenes : (modalReport.imagen_url ? [modalReport.imagen_url] : []))
+    : [];
+  const modalTieneCoords = modalReport && !isNaN(parseFloat(modalReport.coordenadas?.[0])) && !isNaN(parseFloat(modalReport.coordenadas?.[1]));
 
   return (
     <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-[#f1f2ff] text-text-primary">
@@ -305,18 +346,78 @@ export default function AdminPanel() {
             </div>
 
             <div id="comms-section" className="bg-white border border-gray-200 rounded-lg shadow-sm">
-              <div className="px-6 py-4 border-b border-gray-200"><h2 className="text-lg font-semibold text-slate-900">Comunicados</h2></div>
+              <div className="px-6 py-4 border-b border-gray-200">
+                <h2 className="text-lg font-semibold text-slate-900">Comunicados</h2>
+                <p className="text-sm text-gray-500 mt-0.5">Se enviará como notificación a todos los usuarios.</p>
+              </div>
               <div className="p-6">
-                <div className="flex flex-col gap-4">
-                  <textarea
-                    className="form-textarea block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm min-h-36"
-                    placeholder="Escribe tu comunicado aquí..."
-                    value={comunicado} onChange={(e) => setComunicado(e.target.value)}
-                  />
+                <div className="flex flex-col gap-5">
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label htmlFor="com-titulo" className="block text-sm font-medium text-slate-700">Título</label>
+                      <span className="text-xs text-gray-400">{comTitulo.length}/120</span>
+                    </div>
+                    <input
+                      id="com-titulo"
+                      type="text"
+                      maxLength={120}
+                      className="form-input block w-full rounded-md border-gray-300 shadow-sm focus:border-primary focus:ring-primary text-sm"
+                      placeholder="Ej: Mantenimiento programado de la plataforma"
+                      value={comTitulo} onChange={(e) => setComTitulo(e.target.value)}
+                    />
+                  </div>
+
+                  <div>
+                    <label htmlFor="com-cuerpo" className="block text-sm font-medium text-slate-700 mb-1">Contenido del comunicado</label>
+                    <textarea
+                      id="com-cuerpo"
+                      className="form-textarea block w-full rounded-md border-gray-300 shadow-sm focus:border-primary focus:ring-primary text-sm min-h-36"
+                      placeholder="Escribe aquí el mensaje completo..."
+                      value={comCuerpo} onChange={(e) => setComCuerpo(e.target.value)}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      Imágenes <span className="font-normal text-gray-400">(opcional, hasta {MAX_IMAGENES_COMUNICADO}, máx. {MAX_MB_IMAGEN} MB c/u)</span>
+                    </label>
+                    <input
+                      ref={comFileRef} type="file" accept="image/*" multiple className="hidden"
+                      onChange={(e) => addComImagenes(e.target.files)}
+                    />
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-sm text-slate-600 hover:border-primary hover:bg-white"
+                      onClick={() => comFileRef.current?.click()}
+                    >
+                      <span className="material-symbols-outlined text-slate-400">add_photo_alternate</span>
+                      Haz clic para agregar imágenes
+                    </button>
+                    {comImagenes.length > 0 && (
+                      <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
+                        {comImagenes.map((img, i) => (
+                          <div key={img.preview} className="relative group">
+                            <img src={img.preview} alt={`Imagen ${i + 1}`} className="h-24 w-full rounded-md border border-gray-200 object-cover" />
+                            <button
+                              type="button" aria-label="Quitar imagen"
+                              className="absolute -top-2 -right-2 flex h-6 w-6 items-center justify-center rounded-full bg-red-600 text-white shadow hover:bg-red-700"
+                              onClick={() => removeComImagen(i)}
+                            >
+                              <span className="material-symbols-outlined" style={{ fontSize: 16 }}>close</span>
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
                   <div className="flex justify-end">
-                    <button className="inline-flex items-center justify-center rounded-md border border-transparent bg-primary px-4 py-2 text-sm font-medium text-white shadow-sm hover:opacity-90" onClick={sendComunicado}>
+                    <button
+                      className="inline-flex items-center justify-center rounded-md border border-transparent bg-primary px-4 py-2 text-sm font-medium text-white shadow-sm hover:opacity-90 disabled:opacity-60"
+                      onClick={sendComunicado} disabled={enviandoCom}
+                    >
                       <span className="material-symbols-outlined mr-2 -ml-1">send</span>
-                      Enviar a la comunidad
+                      {enviandoCom ? 'Enviando...' : 'Enviar a la comunidad'}
                     </button>
                   </div>
                 </div>
@@ -327,40 +428,123 @@ export default function AdminPanel() {
       </main>
 
       {modalReport && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40" onClick={(e) => { if (e.target === e.currentTarget) setModalReport(null); }}>
-          <div className="bg-white rounded-xl max-w-5xl w-full mx-4 md:mx-0 p-6 shadow-2xl border border-gray-200">
-            <div className="flex items-start justify-between mb-4">
-              <div>
-                <h3 className="text-2xl font-semibold">Detalle del Reporte <span className="text-gray-500 text-base font-normal">#{modalReport.id}</span></h3>
-                <p className="text-sm text-gray-500 mt-1">Información completa del reporte seleccionado</p>
+        <div
+          className="fixed inset-0 z-[1200] flex items-center justify-center bg-black bg-opacity-50 p-3 sm:p-5"
+          onClick={(e) => { if (e.target === e.currentTarget) setModalReport(null); }}
+        >
+          <div className="flex h-[94vh] w-full max-w-[96vw] flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-2xl">
+            {/* Encabezado */}
+            <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-6 py-4">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-3">
+                  <h3 className="text-2xl font-semibold text-slate-900">Detalle del Reporte <span className="text-gray-400 text-lg font-normal">#{modalReport.id}</span></h3>
+                  <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${ESTADO_BADGE[modalReport.estado] || ESTADO_BADGE.pendiente}`}>{modalReport.estado || 'pendiente'}</span>
+                  <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${levelBadge}`}>Riesgo {level.toLowerCase()}</span>
+                </div>
+                <p className="mt-1 text-sm text-gray-500">Información completa del reporte seleccionado</p>
               </div>
-              <button className="text-gray-500 hover:text-gray-700" onClick={() => setModalReport(null)}>Cerrar</button>
+              <button type="button" aria-label="Cerrar" className="flex-shrink-0 rounded-full p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-700" onClick={() => setModalReport(null)}>
+                <span className="material-symbols-outlined">close</span>
+              </button>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="md:col-span-2">
-                <div className="mb-4">
-                  <p className="text-sm text-gray-600 font-medium">{modalReport.ubicacion}</p>
-                  <p className="mt-3 text-base text-gray-700">{modalReport.descripcion}</p>
+
+            {/* Contenido (con scroll interno) */}
+            <div className="flex-1 overflow-y-auto bg-slate-50 p-5 sm:p-6">
+              <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
+                {/* Columna izquierda: datos */}
+                <div className="space-y-5 lg:col-span-3">
+                  <section className="rounded-lg border border-gray-200 bg-white p-5">
+                    <h4 className="mb-4 text-xs font-semibold uppercase tracking-wider text-gray-500">Información general</h4>
+                    <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2">
+                      {[
+                        ['Tipo de riesgo', prettyType(modalReport.tipo) || '—'],
+                        ['Nivel de riesgo', <span key="nivel" className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${levelBadge}`}>{level}</span>],
+                        ['Zona / Barrio', modalReport.zona || 'Sin zona'],
+                        ['Fecha de creación', modalReport.fecha_creacion ? new Date(modalReport.fecha_creacion).toLocaleString() : '—'],
+                      ].map(([label, value]) => (
+                        <div key={label}>
+                          <dt className="text-xs text-gray-500">{label}</dt>
+                          <dd className="mt-1 text-sm font-medium text-gray-900">{value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </section>
+
+                  <section className="rounded-lg border border-gray-200 bg-white p-5">
+                    <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-500">Ubicación</h4>
+                    <p className="flex items-start gap-2 break-words text-sm text-gray-800">
+                      <span className="material-symbols-outlined text-gray-400" style={{ fontSize: 20 }}>location_on</span>
+                      <span className="min-w-0">{modalReport.ubicacion || 'No disponible'}</span>
+                    </p>
+                  </section>
+
+                  <section className="rounded-lg border border-gray-200 bg-white p-5">
+                    <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-500">Descripción</h4>
+                    <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-800">{modalReport.descripcion || 'Sin descripción'}</p>
+                  </section>
+
+                  <section className="rounded-lg border border-gray-200 bg-white p-5">
+                    <h4 className="mb-4 text-xs font-semibold uppercase tracking-wider text-gray-500">Creado por</h4>
+                    <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-3">
+                      {[
+                        ['Nombre', modalReport.creado_por?.username || (typeof modalReport.creado_por === 'string' ? modalReport.creado_por : '—')],
+                        ['Email', modalReport.creado_por?.email || '—'],
+                        ['Teléfono', modalReport.creado_por?.telefono || '—'],
+                      ].map(([label, value]) => (
+                        <div key={label} className="min-w-0">
+                          <dt className="text-xs text-gray-500">{label}</dt>
+                          <dd className="mt-1 break-words text-sm font-medium text-gray-900">{value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </section>
                 </div>
-                <div className="grid grid-cols-2 gap-4 mt-4 text-sm text-gray-600">
-                  <div className="flex items-center gap-3"><div className="text-xs text-gray-500 w-28">Tipo</div><div className="text-sm font-medium text-gray-800">{TYPE_LABELS[(modalReport.tipo || '').trim()] || modalReport.tipo || '—'}</div></div>
-                  <div className="flex items-center gap-3"><div className="text-xs text-gray-500 w-28">Prioridad</div><div><span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${levelBadge}`}>{level}</span></div></div>
-                  <div className="flex items-center gap-3"><div className="text-xs text-gray-500 w-28">Estado</div><div className="text-sm font-medium text-gray-700">{modalReport.estado}</div></div>
-                  <div className="flex items-center gap-3"><div className="text-xs text-gray-500 w-28">Creado por</div><div className="text-sm font-medium text-gray-700">{modalReport.creado_por?.username || modalReport.creado_por || '—'}</div></div>
-                </div>
-                <div className="mt-6 flex gap-3">
-                  <button className="inline-flex items-center gap-2 h-10 px-4 rounded-md bg-green-600 text-white text-sm font-medium shadow-sm hover:bg-green-700" onClick={approveFromModal}>Aprobar</button>
-                  <button className="inline-flex items-center gap-2 h-10 px-4 rounded-md bg-red-50 text-red-600 text-sm font-medium border border-red-100 hover:bg-red-100" onClick={rejectFromModal}>Rechazar</button>
+
+                {/* Columna derecha: mapa e imágenes */}
+                <div className="space-y-5 lg:col-span-2">
+                  <section className="rounded-lg border border-gray-200 bg-white p-5">
+                    <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-500">Ubicación en el mapa</h4>
+                    {modalTieneCoords ? (
+                      <div ref={modalMapDivRef} className="w-full overflow-hidden rounded-md border border-gray-200" style={{ height: 300 }} />
+                    ) : (
+                      <div className="flex h-24 items-center justify-center rounded-md border border-dashed border-gray-300 text-sm text-gray-500">Este reporte no tiene coordenadas</div>
+                    )}
+                  </section>
+
+                  <section className="rounded-lg border border-gray-200 bg-white p-5">
+                    <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-500">Imágenes adjuntas ({modalImagenes.length})</h4>
+                    {modalImagenes.length === 0 ? (
+                      <div className="flex h-24 items-center justify-center rounded-md border border-dashed border-gray-300 text-sm text-gray-500">Este reporte no tiene imágenes</div>
+                    ) : (
+                      <div className={`grid gap-3 ${modalImagenes.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
+                        {modalImagenes.map((src, i) => (
+                          <button type="button" key={i} className="overflow-hidden rounded-md border border-gray-200 bg-gray-100" onClick={() => setImagenAmpliada(mediaUrl(src))}>
+                            <img
+                              src={mediaUrl(src)} alt={`Imagen ${i + 1} del reporte`} className="h-48 w-full object-cover"
+                              onError={(e) => { e.currentTarget.replaceWith(Object.assign(document.createElement('div'), { className: 'flex h-48 items-center justify-center px-2 text-center text-xs text-gray-500', textContent: 'No se pudo cargar la imagen' })); }}
+                            />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </section>
                 </div>
               </div>
-              <div className="md:col-span-1">
-                <div ref={modalMapDivRef} className="w-full rounded-md overflow-hidden shadow-sm" style={{ height: 200, border: '1px solid #e5e7eb' }} />
-                <div className="mt-4 rounded-md overflow-hidden border border-gray-200 p-2 bg-white">
-                  {modalReport.imagen_url && <img src={modalReport.imagen_url} className="max-h-[320px] rounded-md border object-cover w-full" />}
-                </div>
-              </div>
+            </div>
+
+            {/* Acciones */}
+            <div className="flex flex-wrap items-center justify-end gap-3 border-t border-gray-200 bg-white px-6 py-4">
+              <button type="button" className="h-10 rounded-md border border-gray-300 bg-white px-4 text-sm font-medium text-gray-700 hover:bg-gray-50" onClick={() => setModalReport(null)}>Cerrar</button>
+              <button type="button" className="h-10 rounded-md border border-red-100 bg-red-50 px-4 text-sm font-medium text-red-600 hover:bg-red-100" onClick={rejectFromModal}>Rechazar</button>
+              <button type="button" className="h-10 rounded-md bg-green-600 px-5 text-sm font-medium text-white shadow-sm hover:bg-green-700" onClick={approveFromModal}>Aprobar</button>
             </div>
           </div>
+        </div>
+      )}
+
+      {imagenAmpliada && (
+        <div className="fixed inset-0 z-[1300] flex items-center justify-center bg-black bg-opacity-85 p-4" onClick={() => setImagenAmpliada(null)}>
+          <img src={imagenAmpliada} alt="Imagen ampliada" className="max-h-full max-w-full rounded-lg object-contain" />
         </div>
       )}
     </div>

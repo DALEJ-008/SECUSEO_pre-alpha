@@ -1,6 +1,9 @@
 """Controladores del dominio de administración."""
 from datetime import timedelta
 
+from django import forms
+from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -18,7 +21,7 @@ from apps.reportes.serializers import ReporteAdminSerializer
 from apps.usuarios.models import Usuario
 
 from .filters import buscar_reportes
-from .models import Comunicado
+from .models import Comunicado, ComunicadoImagen
 from .permissions import EsAdministrador, EsModerador
 from .serializers import UsuarioAdminSerializer
 
@@ -171,9 +174,29 @@ class EliminarUsuarioView(APIView):
         return Response({"ok": True})
 
 
+MAX_IMAGENES_COMUNICADO = 6
+
+
+def _validar_imagenes(archivos):
+    """Valida cantidad, tamaño y formato. Devuelve (archivos, error_o_None)."""
+    if len(archivos) > MAX_IMAGENES_COMUNICADO:
+        return None, f"Máximo {MAX_IMAGENES_COMUNICADO} imágenes por comunicado."
+    limite = settings.TAMANO_MAX_IMAGEN_MB * 1024 * 1024
+    campo = forms.ImageField()
+    for archivo in archivos:
+        if archivo.size > limite:
+            return None, f"Cada imagen debe pesar menos de {settings.TAMANO_MAX_IMAGEN_MB} MB."
+        try:
+            campo.clean(archivo)
+        except ValidationError:
+            return None, f"'{archivo.name}' no es una imagen válida."
+        archivo.seek(0)
+    return archivos, None
+
+
 @extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
 class ComunicadoCrearView(APIView):
-    """POST /api/comunicado/create/ (title, body) -> notifica a todos los usuarios activos."""
+    """POST /api/comunicado/create/ (title, body, images[]) -> notifica a todos los usuarios activos."""
 
     permission_classes = [EsAdministrador]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
@@ -182,12 +205,24 @@ class ComunicadoCrearView(APIView):
         titulo = (request.data.get("title") or "").strip()[:120]
         cuerpo = (request.data.get("body") or "").strip()
         if not titulo or not cuerpo:
+            detalle = {}
+            if not titulo:
+                detalle["title"] = ["Este campo es obligatorio."]
+            if not cuerpo:
+                detalle["body"] = ["Este campo es obligatorio."]
             return Response(
-                {"mensaje": "La solicitud contiene errores de validación.", "detalle": {"body": ["Este campo es obligatorio."]}},
+                {"mensaje": "La solicitud contiene errores de validación.", "detalle": detalle},
                 status=status.HTTP_400_BAD_REQUEST,
+            )
+        imagenes, error = _validar_imagenes(request.FILES.getlist("images"))
+        if error:
+            return Response(
+                {"mensaje": error, "detalle": {"images": [error]}}, status=status.HTTP_400_BAD_REQUEST
             )
         with transaction.atomic():
             comunicado = Comunicado.objects.create(titulo=titulo, cuerpo=cuerpo, creado_por=request.user)
+            for archivo in imagenes:
+                ComunicadoImagen.objects.create(comunicado=comunicado, imagen=archivo)
             Notificacion.objects.bulk_create(
                 [
                     Notificacion(usuario=u, titulo=titulo, cuerpo=cuerpo, comunicado=comunicado)

@@ -56,8 +56,8 @@ export function mapPriorityToLevel(p) {
   if (s.includes('alto') || s.includes('3') || s.includes('3.0')) return 'Alto';
   if (s.includes('medio') || s.includes('2') || s.includes('2.0')) return 'Medio';
   if (s.includes('extorsion') || s.includes('violencia') || s.includes('robo')) return 'Alto';
-  if (s.includes('ilumin') || s.includes('iluminacion')) return 'Bajo';
-  if (s.includes('hurto') || s.includes('vandal')) return 'Medio';
+  if (s.includes('hurto') || s.includes('drog') || s.includes('agresion') || s.includes('accident')) return 'Medio';
+  if (s.includes('ilumin') || s.includes('iluminacion') || s.includes('vandal')) return 'Bajo';
   return 'Bajo';
 }
 
@@ -66,4 +66,31 @@ export function mapPriorityToLevel(p) {
 export function normalizeName(name) {
   if (name === undefined || name === null) return '';
   try { return name.toString().trim().toLowerCase(); } catch (e) { return String(name).trim().toLowerCase(); }
+}
+
+
+// Nivel de riesgo (Alto / Medio / Bajo) y colores
+// Los niveles replican el catálogo del backend (tipos_riesgo/migrations).
+const NIVEL_POR_TIPO = {
+  robo: 'Alto', asalto: 'Alto', violencia: 'Alto', incendio: 'Alto', amenaza: 'Alto',
+  robo_vehiculo: 'Alto', agresiones_fisicas: 'Alto', extorsion: 'Alto',
+  hurto: 'Medio', vandalismo: 'Medio', accidente: 'Medio', consumo_drogas: 'Medio',
+  'consumo/venta de drogas': 'Medio', acoso_callejero: 'Medio', prostitucion_ilegal: 'Medio',
+  fraude_estafa: 'Medio',
+  iluminacion: 'Bajo', otro: 'Bajo',
+};
+
+// Colores únicos para marcadores, badges y leyenda
+export const COLOR_NIVEL = { Alto: '#dc2626', Medio: '#f59e0b', Bajo: '#16a34a' };
+
+// Devuelve 'Alto' | 'Medio' | 'Bajo' para un reporte.
+// 1) usa la prioridad que envía el backend (si existe), 2) si no, el tipo de riesgo.
+export function nivelDeRiesgo(reporte) {
+  const pri = String(reporte?.prioridad || '').toLowerCase().trim();
+  if (pri === 'alto') return 'Alto';
+  if (pri === 'medio') return 'Medio';
+  if (pri === 'bajo') return 'Bajo';
+  const tipo = String(reporte?.tipo || '').toLowerCase().trim();
+  if (NIVEL_POR_TIPO[tipo]) return NIVEL_POR_TIPO[tipo];
+  return mapPriorityToLevel(tipo);
 }

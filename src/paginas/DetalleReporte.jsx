@@ -1,18 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Header from '../componentes/Header';
-import { apiFetch, apiJson } from '../lib/services/api';
-import { prettyType } from '../lib/services/tipos';
+import { apiFetch, apiJson, mediaUrl } from '../lib/services/api';
+import { prettyType, nivelDeRiesgo } from '../lib/services/tipos';
 
 // Migrado de Frontend/HTML/ValidacionyComentariosReportes.html.
-//
-// NOTA: la plantilla Django original rellenaba esta página server-side con
-// contexto adicional (fecha, imágenes) que hoy no viaja en la respuesta JSON
-// de /api/reportes/<pk>/ (Backend/views.py -> detalle_reporte). Este
-// componente ya consume ese endpoint tal cual existe; si quieres fecha e
-// imágenes aquí también, hay que añadir esos campos a esa vista en el
-// backend (el admin sí los expone en /admin/api/reportes/<pk>/detail/, pero
-// ese endpoint requiere permisos de administrador).
 export default function ReportDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -23,6 +15,7 @@ export default function ReportDetail() {
   const [validationsCount, setValidationsCount] = useState(0);
   const [commentText, setCommentText] = useState('');
   const [showCommentForm, setShowCommentForm] = useState(false);
+  const [imagenAmpliada, setImagenAmpliada] = useState(null);
   const typingRef = useRef(false);
 
   async function loadReport() {
@@ -80,6 +73,10 @@ export default function ReportDetail() {
     } catch (e) { alert('No se pudo completar la operación'); }
   }
 
+  const imagenes = report?.imagenes?.length ? report.imagenes : (report?.imagen_url ? [report.imagen_url] : []);
+  const nivel = report ? nivelDeRiesgo(report) : null;
+  const nivelBadge = nivel === 'Alto' ? 'bg-red-100 text-red-800' : nivel === 'Medio' ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800';
+
   return (
     <div className="min-h-screen bg-[#f1f2ff]" style={{ fontFamily: 'Poppins, "Noto Sans", sans-serif' }}>
       <Header />
@@ -96,8 +93,27 @@ export default function ReportDetail() {
               <div className="col-span-3 text-sm text-gray-800">{report?.descripcion || ''}</div>
               <div className="col-span-1 text-sm font-medium text-gray-500">Zona</div>
               <div className="col-span-3 text-sm text-gray-800">{report?.zona || 'Sin zona'}</div>
+              <div className="col-span-1 text-sm font-medium text-gray-500">Nivel de riesgo</div>
+              <div className="col-span-3 text-sm">{nivel && <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${nivelBadge}`}>{nivel}</span>}</div>
+              <div className="col-span-1 text-sm font-medium text-gray-500">Fecha</div>
+              <div className="col-span-3 text-sm text-gray-800">{report?.fecha_creacion ? new Date(report.fecha_creacion).toLocaleString() : '—'}</div>
             </div>
           </div>
+          {imagenes.length > 0 && (
+            <div className="px-6 pb-6">
+              <div className="mb-3 text-sm font-medium text-gray-500">Imágenes adjuntas</div>
+              <div className={`grid gap-3 ${imagenes.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
+                {imagenes.map((src, i) => (
+                  <button type="button" key={i} className="overflow-hidden rounded-lg border border-gray-200 bg-gray-100" onClick={() => setImagenAmpliada(mediaUrl(src))}>
+                    <img
+                      src={mediaUrl(src)} alt={`Imagen ${i + 1} del reporte`} className="max-h-80 w-full object-cover"
+                      onError={(e) => { e.currentTarget.replaceWith(Object.assign(document.createElement('div'), { className: 'flex h-32 items-center justify-center px-2 text-center text-xs text-gray-500', textContent: 'No se pudo cargar la imagen' })); }}
+                    />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="px-6 py-4 border-t border-gray-200 flex flex-wrap items-center gap-4">
             <button className="flex items-center justify-center gap-2 h-10 px-4 rounded-md bg-primary text-white text-sm font-bold shadow-sm hover:opacity-90" onClick={validate}>
               <span className="material-symbols-outlined text-base">check_circle</span>
@@ -152,6 +168,12 @@ export default function ReportDetail() {
           </div>
         </div>
       </main>
+
+      {imagenAmpliada && (
+        <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-black bg-opacity-85 p-4" onClick={() => setImagenAmpliada(null)}>
+          <img src={imagenAmpliada} alt="Imagen ampliada" className="max-h-full max-w-full rounded-lg object-contain" />
+        </div>
+      )}
     </div>
   );
 }

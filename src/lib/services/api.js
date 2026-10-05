@@ -35,3 +35,14 @@ export async function apiJson(url, options = {}) {
   try { data = await res.json(); } catch (e) { /* respuesta sin cuerpo JSON */ } //intenta convertir la respuesta a formato JSON, si falla, data se mantiene como null
   return { res, data }; //devuelve un objeto con la respuesta y los datos en formato JSON (si están disponibles)
 }
+
+// Convierte la URL de una imagen del backend (normalmente "/media/...") en una URL usable.
+// - Si ya es absoluta (http/https/data/blob) se deja igual.
+// - En desarrollo, Vite hace proxy de /media hacia Django.
+// - Si el frontend se sirve desde otro dominio, define VITE_MEDIA_BASE (ej: http://127.0.0.1:8000).
+export function mediaUrl(url) {
+  if (!url) return '';
+  if (/^(https?:|data:|blob:)/i.test(url)) return url;
+  const base = (import.meta.env.VITE_MEDIA_BASE || '').replace(/\/$/, '');
+  return `${base}${url.startsWith('/') ? '' : '/'}${url}`;
+}

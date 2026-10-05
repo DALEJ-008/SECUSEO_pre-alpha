@@ -20,3 +20,18 @@ class Comunicado(models.Model):
 
     def __str__(self):
         return self.titulo
+
+
+class ComunicadoImagen(models.Model):
+    """Imagen adjunta a un comunicado (un comunicado puede tener varias)."""
+
+    comunicado = models.ForeignKey(Comunicado, on_delete=models.CASCADE, related_name="imagenes")
+    imagen = models.ImageField(upload_to="comunicados/%Y/%m/")
+
+    class Meta:
+        ordering = ["id"]
+        verbose_name = "imagen de comunicado"
+        verbose_name_plural = "imágenes de comunicados"
+
+    def __str__(self):
+        return f"Imagen {self.pk} de {self.comunicado_id}"

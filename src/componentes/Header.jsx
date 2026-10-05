@@ -1,6 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { apiFetch, apiJson, getCookie } from '../lib/services/api';
+import { apiFetch, apiJson, mediaUrl } from '../lib/services/api';
+
+function recortar(texto, max = 90) {
+  const t = String(texto || '').replace(/\s+/g, ' ').trim();
+  return t.length > max ? `${t.slice(0, max).trimEnd()}...` : t;
+}
+
+function vistaPrevia(n) {
+  const titulo = String(n.titulo || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const previa = String(n.resumen || '').replace(/\s+/g, ' ').replace(/\.\.\.$/, '').trim();
+  const previaLower = previa.toLowerCase();
+  if (!previa) return '';
+  const k = Math.min(titulo.length, previaLower.length, 40);
+  if (k > 0 && titulo.slice(0, k) === previaLower.slice(0, k)) return '';
+  return recortar(n.resumen);
+}
 
 // Encabezado compartido: logo, notificaciones y menú de perfil.
 // Replica la lógica de PaginaPrincipal.html / PanelAdministracion.html /
@@ -12,6 +27,7 @@ export default function Header() {
   const [profileOpen, setProfileOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [notifDetail, setNotifDetail] = useState(null);
+  const [imagenAmpliada, setImagenAmpliada] = useState(null);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [editUsername, setEditUsername] = useState('');
   const [editPhoto, setEditPhoto] = useState(null);
@@ -54,6 +70,7 @@ export default function Header() {
   }, []);
 
   async function openNotification(n) {
+    setNotifOpen(false);
     await apiFetch(`/api/notificaciones/${n.id}/leer/`, { method: 'POST' });
     const { res, data } = await apiJson(`/api/notificaciones/${n.id}/detail/`);
     if (!res.ok) { alert('No se pudo cargar la notificación'); return; }
@@ -85,7 +102,7 @@ export default function Header() {
   }
 
   return (
-    <header ref={rootRef} className="flex items-center justify-between whitespace-nowrap border-b border-solid border-gray-200 bg-white px-6 py-4 shadow-sm">
+    <header ref={rootRef} className="relative z-[1101] flex items-center justify-between whitespace-nowrap border-b border-solid border-gray-200 bg-white px-6 py-4 shadow-sm">
       <div className="flex items-center gap-3 text-text-primary">
         <Link to="/"><img alt="SECUSEO Logo" className="h-12 w-auto" src="/img/Logo2.png" /></Link>
       </div>
@@ -103,18 +120,31 @@ export default function Header() {
             )}
           </button>
           {notifOpen && (
-            <div className="absolute right-0 mt-2 w-80 bg-white border border-gray-200 rounded-md shadow-lg z-50">
-              <div className="p-3 text-sm font-semibold">Notificaciones</div>
-              <div className="max-h-56 overflow-auto divide-y">
+            <div className="absolute right-0 mt-2 w-80 whitespace-normal bg-white border border-gray-200 rounded-md shadow-lg z-50 overflow-hidden">
+              <div className="p-3 text-sm font-semibold border-b border-gray-100">Comunicados</div>
+              <div className="max-h-80 overflow-y-auto divide-y divide-gray-100">
                 {notifications.length === 0 && (
-                  <div className="p-2 text-center text-xs text-gray-500">No disponibles</div>
+                  <div className="p-4 text-center text-xs text-gray-500">No hay comunicados disponibles</div>
                 )}
-                {notifications.map((n) => (
-                  <div key={n.id} className="p-2 cursor-pointer hover:bg-gray-50" onClick={() => openNotification(n)}>
-                    <div className="font-medium text-sm">{n.titulo}</div>
-                    <div className="text-xs text-gray-500">{n.resumen}</div>
-                  </div>
-                ))}
+                {notifications.map((n) => {
+                  const previa = vistaPrevia(n);
+                  return (
+                    <button
+                      type="button"
+                      key={n.id}
+                      className="block w-full text-left px-3 py-2.5 hover:bg-gray-50 focus:outline-none focus:bg-gray-50"
+                      onClick={() => openNotification(n)}
+                    >
+                      <div className="flex items-start gap-2">
+                        {!n.leida && <span className="mt-1.5 h-2 w-2 flex-shrink-0 rounded-full bg-primary" />}
+                        <div className="min-w-0 flex-1">
+                          <div className={`truncate text-sm text-gray-900 ${n.leida ? 'font-medium' : 'font-bold'}`}>{n.titulo}</div>
+                          {previa && <div className="clamp-2 mt-0.5 break-words text-xs text-gray-500">{previa}</div>}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -152,16 +182,66 @@ export default function Header() {
         </div>
       </div>
 
-      {/* Modal detalle de notificación */}
+      {/* Modal detalle de notificación / comunicado */}
       {notifDetail && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black bg-opacity-50" onClick={() => setNotifDetail(null)}>
-          <div className="bg-white rounded-lg w-11/12 max-w-2xl p-4 shadow-lg border border-gray-200" onClick={(e) => e.stopPropagation()}>
-            <div className="flex justify-between items-start">
-              <h3 className="text-lg font-semibold">{notifDetail.titulo || 'Notificación'}</h3>
-              <button className="text-gray-500" onClick={() => setNotifDetail(null)}>Cerrar</button>
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black bg-opacity-50 p-4" onClick={() => setNotifDetail(null)}>
+          <div
+            className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden whitespace-normal rounded-xl border border-gray-200 bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-6 py-4">
+              <div className="min-w-0">
+                <h3 className="break-words text-xl font-semibold text-gray-900">{notifDetail.titulo || 'Comunicado'}</h3>
+                {notifDetail.fecha && (
+                  <p className="mt-1 text-xs text-gray-500">{new Date(notifDetail.fecha).toLocaleString()}</p>
+                )}
+              </div>
+              <button
+                type="button"
+                aria-label="Cerrar"
+                className="flex-shrink-0 rounded-full p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+                onClick={() => setNotifDetail(null)}
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
             </div>
-            <div className="mt-3">{notifDetail.cuerpo}</div>
+
+            <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+              <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700">{notifDetail.cuerpo}</p>
+
+              {notifDetail.imagenes?.length > 0 && (
+                <div className={`grid gap-3 ${notifDetail.imagenes.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
+                  {notifDetail.imagenes.map((src, i) => (
+                    <button
+                      type="button"
+                      key={i}
+                      className="overflow-hidden rounded-lg border border-gray-200 bg-gray-50"
+                      onClick={() => setImagenAmpliada(mediaUrl(src))}
+                    >
+                      <img src={mediaUrl(src)} alt={`Imagen ${i + 1} del comunicado`} className="max-h-72 w-full object-cover" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end border-t border-gray-200 bg-gray-50 px-6 py-3">
+              <button
+                type="button"
+                className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                onClick={() => setNotifDetail(null)}
+              >
+                Cerrar
+              </button>
+            </div>
           </div>
+        </div>
+      )}
+
+      {/* Imagen ampliada */}
+      {imagenAmpliada && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black bg-opacity-80 p-4" onClick={() => setImagenAmpliada(null)}>
+          <img src={imagenAmpliada} alt="Imagen ampliada" className="max-h-full max-w-full rounded-lg object-contain" />
         </div>
       )}
 

@@ -14,9 +14,18 @@ body {
   font-family: 'Poppins', 'Noto Sans', sans-serif;
 }
 
+/* Cada mapa define su propia altura (antes se forzaba height:100% y los
+   minimapas con altura fija quedaban con 0px de alto) */
 .leaflet-container {
-  height: 100% !important;
-  width: 100% !important;
+  width: 100%;
+}
+
+/* Texto que se corta con "..." tras N líneas (vista previa de comunicados) */
+.clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .legend {

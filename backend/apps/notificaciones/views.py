@@ -31,5 +31,9 @@ class NotificacionLeerView(APIView):
 @extend_schema(request=OpenApiTypes.OBJECT, responses=OpenApiTypes.OBJECT)
 class NotificacionDetalleView(APIView):
     def get(self, request, pk):
-        n = get_object_or_404(Notificacion, pk=pk, usuario=request.user)
+        n = get_object_or_404(
+            Notificacion.objects.select_related("comunicado").prefetch_related("comunicado__imagenes"),
+            pk=pk,
+            usuario=request.user,
+        )
         return Response(NotificacionDetalleSerializer(n).data)
